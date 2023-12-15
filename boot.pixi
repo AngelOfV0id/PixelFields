@@ -1,0 +1,517 @@
+/*
+
+Pixel Fields
+
+Simple and user-friendly music player and synthesizer
+powered by SunVox and Pixilang engines
+
+Copyright (c) Ivan Movchan <AngelOfV0id@yandex.ru>, 2022 - 2023
+https://angelofv0id.github.io
+
+This is free software released in public domain; see UNLICENSE.txt for further details.
+
+*/
+
+
+
+/* === Functions  === */
+
+
+
+// Get screen size (0 = width, 1 = height)
+
+fn video_size($wh)
+{
+    if ($wh == 0) { ret(get_xsize(get_screen())) }
+    if ($wh == 1) { ret(get_ysize(get_screen())) }
+}
+
+// This function makes container with 4 values ($area, used in is_clicked function)
+
+fn make_area($x, $y, $w, $h)
+{
+    $area = new(4)
+
+    $area[0] = $x
+    $area[1] = $y
+    $area[2] = $w
+    $area[3] = $h
+
+    ret($area)
+}
+
+// Detects if some area (created using make_area function) has been clicked now
+// $area[4] is container with X, Y, width and height values
+
+fn is_clicked($myX, $myY, $area)
+{
+    $x = $area[0]
+    $y = $area[1]
+    $w = $area[2]
+    $h = $area[3]
+
+    ret(($x < $myX && $myX < $x+$w) && ($y < $myY && $myY < $y+$h))
+}
+
+// Load font from file
+// Returns font handle with BLACK key color
+
+fn load_font($fn)
+{
+    $f = load($fn)
+    set_key_color($f, BLACK)
+    ret($f)
+}
+
+// Select and load SunVox song and synth files
+
+fn load_sunvox()
+{
+    $songfn = ""
+    if !pixi_locale
+    {
+        $songfn = file_dialog("Please select a SunVox song", "sunvox", "fff")
+    } else {
+        $songfn = file_dialog("Выберите трек SunVox для воспроизвдения", "sunvox", "fff")
+    }
+
+    $synthfn = ""
+    if !pixi_locale
+    {
+        $synthfn = file_dialog("Please select a SunVox synth", "sunsynth", "fff")
+    } else {
+        $synthfn = file_dialog("Выберите инструмент SunVox", "sunsynth", "fff")
+    }
+
+    if ($songfn == -1 && $synthfn == -1) { ret }
+
+    // Load song
+
+    if $songfn != -1
+    {
+        while 1 { if (sv_load(sv, $songfn) == 0) { break } }
+
+        songname = sv_get_name(sv)
+        songlen = sv_get_length_lines(sv)
+        songlenf = sv_get_length_frames(sv)
+
+        sv_volume(256)
+
+        is_song_loaded = 1
+    }
+
+    // Load synth
+
+    svm = -1
+    if $synthfn != -1
+    {
+        svm = sv_load_module(sv, $synthfn) if svm < 0 { ret } // Something gone wrong...
+        sv_lock(sv) sv_connect_module(sv, svm, 0) sv_unlock(sv)
+        
+        is_synth_loaded = 1
+    }
+
+    // Start song playback (if song is loaded)
+
+    if ($songfn != -1) { sv_play(sv, 0) }
+}
+
+// Display additional information about song and the "Pixel Fields" project
+
+fn info()
+{
+    $about_msg = ""
+    $info = ""
+    $playback_percent_str = ""
+
+    if is_song_loaded
+    {
+        $playback_percent = (100 / songlen) * (sv_get_current_line(sv) + 1)
+        sprintf($playback_percent_str, "%.2f%%", $playback_percent)
+        t_scale(2, 2, 2) transp(127)
+        print($playback_percent_str)
+        t_reset() transp(255)
+    }
+
+    if !pixi_locale
+    {
+        sprintf($about_msg, "Pixel Fields %s\n\nMusic player and simple synthesizer\npowered by SunVox and Pixilang engines\n\nOriginal idea by Alexander Zolotov (c) 2009 - 2010\nProject recreation by Ivan Movchan (c) 2022 - 2023\n\nwarmplace.ru | angelofv0id.github.io", prog_version)
+        sprintf($info, "%s\n\n%d lines, %d frames\n%d beats per minute, %d ticks per line", songname, songlen, songlenf, sv_get_bpm(sv), sv_get_tpl(sv))
+    } else {
+        sprintf($about_msg, "Pixel Fields %s\n\nПростой музыкальный проигрыватель и синтезатор\nна движках SunVox и Pixilang\n\nОригинальная идея: Александр Золотов (c) 2009 - 2010\nВозрождение проекта: Иван Мовчан (c) 2022 - 2023\n\nwarmplace.ru | angelofv0id.github.io", prog_version)
+        sprintf($info, "%s\n\n%d строк, %d кадров\n%d ударов в минуту, %d тиков на строку", songname, songlen, songlenf, sv_get_bpm(sv), sv_get_tpl(sv))
+    }
+
+    t_scale(0.75, 0.75, 0.75)
+    pixi(logo, edge_left + 40, edge_up + 144)
+    print($about_msg, -440, edge_up, WHITE, LEFT | TOP)
+    t_reset()
+
+    t_scale(0.75, 0.75, 0.75)
+    print($info, 0, edge_down, WHITE, BOTTOM)
+    t_reset()
+}
+
+// OpenGL visualization procedure
+
+fn gl_callback($userdata)
+{
+    set_screen(GL_SCREEN) clear(BLACK) // Set OpenGL screen
+
+    // Draw background from image (50% darken)
+
+    transp(127) pixi(background, 0, 0) transp(255)
+
+    // Draw Output module scope
+
+    sv_get_module_scope(sv, 0, 0, visual_buf, sample_count)
+    color = get_color(r, g, b)
+
+    $x = 0 while $x < sample_count
+    {
+        draw_x = edge_left + (draw_offset * $x)
+		draw_height = visual_buf[$x] >> 6
+        fbox(draw_x, 0-draw_height/2, draw_offset, draw_height, get_blend(color, ~color, alpha_diff * $x))
+        $x + 1
+    }
+    transp(255)
+
+    // Draw notes at the bottom of screen
+
+    $l = 0 while $l < note_count
+    {
+        draw_x = note_start_x + (note_width * $l)
+        transp(64)
+        if note_active && (note - 1 == note_start + (note_octave*12) + $l) { transp(255) }
+        print(notes[$l], draw_x + (note_width / 2), edge_down, WHITE, CENTER | BOTTOM)
+        transp(64)
+        $l + 1
+    }
+    transp(255)
+
+    // Change color RGB values
+
+    r + delta_r
+    g + delta_g
+    b + delta_b
+
+    if r >= 255 || r <= 0 { delta_r = 0 - delta_r }
+    if g >= 255 || g <= 0 { delta_g = 0 - delta_g }
+    if b >= 255 || b <= 0 { delta_b = 0 - delta_b }
+
+    transp(192)
+    pixi(toolbar, edge_left + toolbar_width/2) // Draw toolbar
+    transp(255)
+
+    if show_info { info() } // Write additional information if need
+
+    set_screen(0) // Back to default screen
+}
+
+// Deinitialize SunVox engine, remove all the dumpster and reset OpenGL callback function
+
+fn quit()
+{
+    sv_remove(sv) remove(visual_buf)
+    set_gl_callback(-1)
+    fclose(res_tar) set_disk0(0)
+    halt
+}
+
+
+
+/* === Variables === */
+
+video_pixi = 800 // Pixel size
+prog_version = "1.2" // Program version
+
+// OpenGL visualization stuff
+
+sample_count = 4096
+alpha_diff = (256 / sample_count)
+visual_buf = new(sample_count, 1, INT16)
+draw_offset = 0
+
+r = 255
+g = 0
+b = 0
+delta_r = -0.1
+delta_g = 0.5
+delta_b = 0.3
+
+show_info = 0 // Show additional information?
+
+// SunVox playback information
+
+is_song_loaded = 0
+is_synth_loaded = 0
+
+songname = ""
+songlen = 0
+songlenf = 0
+
+playback_status = 0 // Playback status (0 = stopped, 1 = paused, 2 = playing)
+
+rewind_by = 32 // Rewind by ... lines
+
+// Notes
+
+note = 0
+
+note_keys = "zsxdcvgbhnjm,l.;/\0"
+note_keys2 = "q2w3er5t6y7ui9o0p[=]\\\0"
+
+note_start = 48
+note_octave = -1
+note_count = 33
+
+note_width = 0
+note_start_x = 0
+
+note_active = 0 // Is note pressed?
+
+notes = new(note_count) // Notes letters
+
+notes[0] = "C"
+notes[1] = "c"
+notes[2] = "D"
+notes[3] = "d"
+notes[4] = "E"
+notes[5] = "F"
+notes[6] = "f"
+notes[7] = "G"
+notes[8] = "g"
+notes[9] = "A"
+notes[10] = "a"
+notes[11] = "B"
+notes[12] = "C"
+notes[13] = "c"
+notes[14] = "D"
+notes[15] = "d"
+notes[16] = "E"
+notes[17] = "F"
+notes[18] = "f"
+notes[19] = "G"
+notes[20] = "g"
+notes[21] = "A"
+notes[22] = "a"
+notes[23] = "B"
+notes[24] = "C"
+notes[25] = "c"
+notes[26] = "D"
+notes[27] = "d"
+notes[28] = "E"
+notes[29] = "F"
+notes[30] = "f"
+notes[31] = "G"
+notes[32] = "g"
+
+// Pixilang locale (0 = English, 1 = Russian)
+
+pixi_locale = strcmp(LANG_NAME, "en_US")
+
+
+
+/* === Program entry  === */
+
+// Initialize video
+
+set_pixel_size(WINDOW_XSIZE / video_pixi)
+resize(get_screen(), WINDOW_XSIZE, WINDOW_YSIZE)
+set_gl_callback(gl_callback, 0)
+
+// Connect TAR archive with resources to the program
+
+res_tar = fopen("res.tar", "rb")
+set_disk0(res_tar)
+
+// Calculate screen size and other related stuff
+
+sw = video_size(0)
+sh = video_size(1)
+
+edge_left = 0 - (sw / 2)
+edge_right = (sw / 2)
+edge_up = 0 - (sh / 2)
+edge_down = (sh / 2)
+
+draw_offset = (video_size(0) * 2) / sample_count
+
+// Load background image
+
+background = load("0:/background.png")
+
+// Load program logo
+
+logo = load("0:/logo.png")
+
+// Load fonts
+
+set_font(0x20, load_font("0:/font.png"), 16, 6)
+set_font(0x410, load_font("0:/fontc.png"), 16, 4)
+
+// Load toolbar
+
+toolbar = load("0:/toolbar.png")
+toolbar_width = 72
+toolbar_height = 720
+
+toolbar_play = make_area(edge_left, edge_up, toolbar_width, toolbar_width)
+toolbar_stop = make_area(edge_left, edge_up + toolbar_width, toolbar_width, toolbar_width)
+toolbar_back = make_area(edge_left, edge_up + toolbar_width*2, toolbar_width, toolbar_width)
+toolbar_forward = make_area(edge_left, edge_up + toolbar_width*3, toolbar_width, toolbar_width)
+toolbar_octu = make_area(edge_left, edge_up + toolbar_width*4, toolbar_width, toolbar_width)
+toolbar_octd = make_area(edge_left, edge_up + toolbar_width*5, toolbar_width, toolbar_width)
+toolbar_load = make_area(edge_left, edge_up + toolbar_width*6, toolbar_width, toolbar_width)
+toolbar_cfg = make_area(edge_left, edge_up + toolbar_width*7, toolbar_width, toolbar_width)
+toolbar_info = make_area(edge_left, edge_up + toolbar_width*8, toolbar_width, toolbar_width)
+toolbar_exit = make_area(edge_left, edge_up + toolbar_width*9, toolbar_width, toolbar_width)
+
+set_key_color(toolbar, BLACK)
+
+note_width = (sw - toolbar_width) / note_count
+note_start_x = edge_left + toolbar_width
+
+// Initialize SunVox engine
+
+sv = sv_new()
+
+// On quit event do not exit immediately, but call quit() procedure
+
+set_quit_action(QA_NONE)
+
+while 1 // Program lifetime loop
+{
+    frame() // Draw...
+
+    if (!sv_get_status(sv) && playback_status != 1) { playback_status = 0 } // If the song is finished, set 0 playback status (stopped)
+
+    // Event callback
+
+    while get_event() {
+
+        x = EVT[EVT_X] y = EVT[EVT_Y] // Get event coordinates (X.Y)
+
+        // Key down
+
+        if EVT[EVT_TYPE] == EVT_BUTTONDOWN {
+
+            // Play synth note
+
+			if svm > 0 && !note_active {
+				$key = "" sprintf($key, "%c", EVT[EVT_KEY])
+				$note_offset = strstr(note_keys, $key)
+				$octave_up = 0
+
+				if $note_offset == -1 {
+					$note_offset = strstr(note_keys2, $key)
+					$octave_up = 1
+				}
+
+				if $note_offset != -1 {
+					note = note_start + (12 * note_octave) + $note_offset + 1
+					if $octave_up { note + 12 }
+				}
+
+				sv_send_event(sv, 0, note, 129, svm + 1, 0, 0)
+                note_active = 1
+			}
+        }
+
+        // Mouse button down/screen touch
+
+        if EVT[EVT_TYPE] == EVT_MOUSEBUTTONDOWN {
+
+            // Play synth note
+
+			if svm > 0 && !(show_info) {
+				$i = 0 while $i < note_count
+				{
+					$note_x = note_start_x + (note_width * $i)
+					if ($note_x < x && x < $note_x+note_width)
+					{
+                        note = note_start + (12 * note_octave) + $i + 1
+						sv_send_event(sv, 0, note, 129, svm + 1, 0, 0)
+                        note_active = 1
+						break
+					}
+					$i + 1
+				}
+            }
+        }
+
+        // Mouse button up
+
+        if EVT[EVT_TYPE] == EVT_MOUSEBUTTONUP {
+
+            if (is_clicked(x, y, toolbar_play)) // Play/pause
+            {
+                if (playback_status == 2) {
+                    sv_stop(sv) playback_status = 1
+                    break
+                }
+                if (playback_status < 2) {
+                    sv_play(sv, sv_get_current_line(sv)) playback_status = 2
+                }
+            }
+
+            if (is_clicked(x, y, toolbar_stop)) // Stop
+            {
+                sv_stop(sv) sv_rewind(sv, 0)
+                playback_status = 0
+            }
+
+            if (is_clicked(x, y, toolbar_back)) // Rewind back
+            {
+                sv_rewind(sv, sv_get_current_line(sv) - rewind_by)
+            }
+
+            if (is_clicked(x, y, toolbar_forward)) // Rewind forward
+            {
+                sv_rewind(sv, sv_get_current_line(sv) + rewind_by)
+            }
+                
+            if (is_clicked(x, y, toolbar_octu)) // Octave +
+            {
+                if (note_octave) > 6
+                {
+                    note_octave = 6
+                } else {
+                    note_octave + 1
+                }
+            }
+
+            if (is_clicked(x, y, toolbar_octd)) // Octave -
+            {
+                if (note_octave) < -6
+                {
+                    note_octave = -6
+                } else {
+                    note_octave - 1
+                }
+            }
+
+            if (is_clicked(x, y, toolbar_load)) { load_sunvox() } // Load...
+
+            if (is_clicked(x, y, toolbar_cfg)) { prefs_dialog() } // Pixilang Preferences
+
+            if (is_clicked(x, y, toolbar_info)) { show_info = !show_info } // Information
+
+            if (is_clicked(x, y, toolbar_exit)) { quit() } // Exit
+
+        }
+
+        // Mouse button up - note off
+
+        if EVT[EVT_TYPE] == EVT_BUTTONUP || EVT[EVT_TYPE] == EVT_MOUSEBUTTONUP
+        {
+            sv_send_event(sv, 0, 128, 0, 0, 0, 0)
+            note_active = 0
+            note = 0
+        }
+
+        // Quit program...
+
+        if EVT[EVT_TYPE] == EVT_QUIT { quit() }
+    }
+}
